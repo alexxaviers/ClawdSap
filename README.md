@@ -6,7 +6,8 @@ A full-stack application built with a modern web stack.
 
 ```
 ├── frontend/   # Next.js web application (React 19, Tailwind CSS)
-├── backend/    # Backend service (coming soon)
+├── backend/    # Flask API server
+├── run.sh      # Starts both frontend and backend
 └── README.md
 ```
 
@@ -32,4 +33,29 @@ The app will be available at [http://localhost:3000](http://localhost:3000).
 
 ## Backend
 
-Coming soon.
+The backend is a [Flask](https://flask.palletsprojects.com/) API server.
+
+### Setup
+
+```bash
+cd backend
+./setup.sh
+```
+
+This creates a Python virtual environment and installs dependencies.
+
+### Endpoints
+
+- `GET /api/health` — returns `{"status": "ok"}`
+
+## Running the Full Stack
+
+```bash
+./run.sh
+```
+
+This will:
+- Create the backend venv and install dependencies (if needed)
+- Start the Flask backend on [http://localhost:5000](http://localhost:5000)
+- Start the Next.js frontend on [http://localhost:3000](http://localhost:3000)
+- Clean up both processes on Ctrl+C
