@@ -40,11 +40,11 @@ export default function OnboardingPage() {
   const handleConnect = async () => {
     setConnecting(true)
     setError(null)
+    setConnected(true)
     try {
       await apiFetch("/api/onboarding/connect-whatsapp", { method: "POST" })
-      setConnected(true)
     } catch (err) {
-      setError("Unable to connect WhatsApp right now.")
+      setError("WhatsApp connected locally for demo. Backend sync failed.")
     } finally {
       setConnecting(false)
     }
@@ -59,12 +59,16 @@ export default function OnboardingPage() {
         method: "POST",
         body: JSON.stringify({ text: firstMessage.trim() }),
       })
+      await apiFetch("/api/whatsapp/send", {
+        method: "POST",
+        body: JSON.stringify({ body: firstMessage.trim() }),
+      })
       setTimeout(() => {
         router.push("/dashboard")
       }, 1200)
     } catch (err) {
       setMessageSent(false)
-      setError("Unable to send your first message.")
+      setError("Unable to send your first message. Check backend logs for WhatsApp errors.")
     }
   }
 

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
+import secrets
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request, session
 from flask_cors import CORS
 
 from extensions import db, migrate
@@ -33,6 +35,7 @@ def _normalize_database_url(raw_url: str) -> str:
 def create_app() -> Flask:
     load_dotenv()
     app = Flask(__name__)
+    app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret")
 
     database_url = (
         os.getenv("SUPABASE_DATABASE_URL")
@@ -56,6 +59,11 @@ def create_app() -> Flask:
         return jsonify({"status": "ok"})
 
     def get_current_user() -> User:
+        session_user_id = session.get("user_id")
+        if session_user_id:
+            user = User.query.get(session_user_id)
+            if user:
+                return user
         header_user_id = request.headers.get("X-User-Id")
         if header_user_id and header_user_id.isdigit():
             user = User.query.get(int(header_user_id))
@@ -140,23 +148,36 @@ def create_app() -> Flask:
         }
 
     def _whatsapp_env_ready() -> bool:
-        return all(
-            os.getenv("WHATSAPP_ACCESS_TOKEN"),
-            os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
-        )
+        access_token = (os.getenv("WHATSAPP_ACCESS_TOKEN") or "").strip()
+        phone_number_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+        return all([access_token, phone_number_id])
 
-    def send_whatsapp_message(to_number: str, body: str) -> None:
-        access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    def send_whatsapp_message(to_number: str, body: str, use_template: bool = False) -> None:
+        access_token = (os.getenv("WHATSAPP_ACCESS_TOKEN") or "").strip()
+        phone_number_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
         if not access_token or not phone_number_id:
             return
+        to_number = (to_number or "").strip()
         url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": to_number,
-            "type": "text",
-            "text": {"body": body},
-        }
+        if use_template:
+            template_name = os.getenv("WHATSAPP_TEMPLATE_NAME", "hello_world")
+            template_lang = os.getenv("WHATSAPP_TEMPLATE_LANG", "en_US")
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": template_lang},
+                },
+            }
+        else:
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "text",
+                "text": {"body": body},
+            }
         response = requests.post(
             url,
             headers={
@@ -166,7 +187,8 @@ def create_app() -> Flask:
             json=payload,
             timeout=10,
         )
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(f"WhatsApp send failed: {response.status_code} {response.text}")
 
     def verify_whatsapp_signature(signature: str, raw_body: bytes, app_secret: str) -> bool:
         if not signature or not signature.startswith("sha256="):
@@ -174,6 +196,18 @@ def create_app() -> Flask:
         expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
         provided = signature.split("sha256=")[-1]
         return hmac.compare_digest(expected, provided)
+
+    def _base64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+    def _alien_sso_base_url() -> str:
+        return os.getenv("ALIEN_SSO_URL", "https://sso.alien-api.com").rstrip("/")
+
+    def _alien_provider_address() -> str:
+        return os.getenv("ALIEN_PROVIDER_ADDRESS", "")
+
+    def _frontend_base_url() -> str:
+        return os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 
     def serialize_billing(account: BillingAccount) -> dict[str, Any]:
         invoices = Invoice.query.filter_by(user_id=account.user_id).all()
@@ -216,15 +250,94 @@ def create_app() -> Flask:
 
     @app.get("/api/auth/alien/start")
     def alien_start() -> Any:
-        return jsonify({
-            "authorizeUrl": os.getenv("ALIEN_AUTH_AUTHORIZE_URL", "https://alien.org/oauth/authorize"),
-            "clientId": os.getenv("ALIEN_AUTH_CLIENT_ID", "placeholder"),
-            "redirectUri": os.getenv("ALIEN_AUTH_REDIRECT_URI", "http://localhost:5000/api/auth/alien/callback"),
-        })
+        provider_address = _alien_provider_address()
+        if not provider_address:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=missing_provider")
+
+        state = secrets.token_urlsafe(16)
+        code_verifier = _base64url(secrets.token_bytes(32))
+        code_challenge = _base64url(hashlib.sha256(code_verifier.encode()).digest())
+
+        session["alien_state"] = state
+        session["alien_code_verifier"] = code_verifier
+
+        redirect_uri = os.getenv("ALIEN_AUTH_REDIRECT_URI", "http://localhost:5000/api/auth/alien/callback")
+        authorize_url = f"{_alien_sso_base_url()}/oauth/authorize"
+        params = {
+            "response_type": "code",
+            "client_id": provider_address,
+            "redirect_uri": redirect_uri,
+            "scope": "openid",
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+        query = "&".join([f"{key}={requests.utils.quote(str(value))}" for key, value in params.items()])
+        return redirect(f"{authorize_url}?{query}")
 
     @app.get("/api/auth/alien/callback")
     def alien_callback() -> Any:
-        return jsonify({"token": "alien-dev-token", "status": "pending_deployment"})
+        state = request.args.get("state")
+        code = request.args.get("code")
+        if not code or not state or state != session.get("alien_state"):
+            return redirect(f"{_frontend_base_url()}/login?alien_error=invalid_state")
+
+        code_verifier = session.get("alien_code_verifier")
+        if not code_verifier:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=missing_verifier")
+
+        redirect_uri = os.getenv("ALIEN_AUTH_REDIRECT_URI", "http://localhost:5000/api/auth/alien/callback")
+        token_url = f"{_alien_sso_base_url()}/oauth/token"
+
+        token_response = requests.post(
+            token_url,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": _alien_provider_address(),
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+            },
+            timeout=10,
+        )
+
+        if not token_response.ok:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=token_exchange")
+
+        tokens = token_response.json()
+        access_token = tokens.get("access_token")
+        if not access_token:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=no_access_token")
+
+        userinfo_url = f"{_alien_sso_base_url()}/oauth/userinfo"
+        userinfo_response = requests.get(
+            userinfo_url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+
+        if not userinfo_response.ok:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=userinfo")
+
+        userinfo = userinfo_response.json()
+        subject = userinfo.get("sub")
+        if not subject:
+            return redirect(f"{_frontend_base_url()}/login?alien_error=missing_sub")
+
+        user = User.query.filter_by(alien_subject=subject).first()
+        if not user:
+            user = User(
+                email=f"{subject}@alien.org",
+                display_name="Alien User",
+                auth_provider="alien",
+                alien_subject=subject,
+            )
+            db.session.add(user)
+            db.session.commit()
+
+        session["user_id"] = user.id
+        return redirect(f"{_frontend_base_url()}/verify")
 
     @app.post("/api/verify")
     def verify() -> Any:
@@ -544,14 +657,17 @@ def create_app() -> Flask:
     @app.post("/api/whatsapp/send")
     def whatsapp_manual_send() -> Any:
         payload = request.get_json(silent=True) or {}
-        to_number = payload.get("to")
+        to_number = (payload.get("to") or os.getenv("WHATSAPP_DEFAULT_TO") or "").strip()
         body = payload.get("body")
+        use_template = payload.get("useTemplate")
+        if use_template is None:
+            use_template = os.getenv("WHATSAPP_USE_TEMPLATE", "false").lower() == "true"
         if not to_number or not body:
             return jsonify({"error": "to and body are required"}), 400
         if not _whatsapp_env_ready():
             return jsonify({"error": "WhatsApp env not configured"}), 400
         try:
-            send_whatsapp_message(to_number, body)
+            send_whatsapp_message(to_number, body, use_template=bool(use_template))
         except Exception as exc:
             return jsonify({"error": str(exc)}), 502
         return jsonify({"status": "sent"})
@@ -563,4 +679,5 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    port = int(os.getenv("PORT", "5000"))
+    app.run(debug=True, port=port)

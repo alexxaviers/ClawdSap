@@ -58,6 +58,10 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({ text }),
       })
+      await apiFetch("/api/whatsapp/send", {
+        method: "POST",
+        body: JSON.stringify({ body: text }),
+      })
     } catch (err) {
       // ignore
     }

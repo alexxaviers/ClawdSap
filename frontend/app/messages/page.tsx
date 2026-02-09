@@ -43,6 +43,10 @@ export default function MessagesPage() {
         method: "POST",
         body: JSON.stringify({ text: input.trim() }),
       })
+      await apiFetch("/api/whatsapp/send", {
+        method: "POST",
+        body: JSON.stringify({ body: input.trim() }),
+      })
       setMessages((prev) => [...prev, data.userMessage, data.botMessage])
       setInput("")
       setTimeout(scrollToBottom, 100)
