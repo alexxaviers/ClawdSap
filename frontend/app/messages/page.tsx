@@ -13,6 +13,7 @@ import {
   Filter,
   ArrowDown,
 } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
 interface Message {
   id: number
@@ -23,27 +24,8 @@ interface Message {
   taskCreated?: string
 }
 
-const INITIAL_MESSAGES: Message[] = [
-  { id: 1, text: "remind me to call Sam at 5pm", sender: "user", timestamp: "2:43 PM" },
-  { id: 2, text: "Done. Reminder set for 5:00 PM today: \"Call Sam\". I'll text you 5 minutes before.", sender: "clods", timestamp: "2:43 PM", status: "executed", taskCreated: "Call Sam" },
-  { id: 3, text: "what's on my schedule tomorrow", sender: "user", timestamp: "2:28 PM" },
-  { id: 4, text: "Tomorrow you have:\n- 9:00 AM: Team standup\n- 11:30 AM: 1:1 with Sarah\n- 2:00 PM: Dentist (rescheduled)\n- 4:00 PM: Open slot\n\nWant me to block time for anything?", sender: "clods", timestamp: "2:28 PM", status: "executed" },
-  { id: 5, text: "add groceries to my list", sender: "user", timestamp: "1:15 PM" },
-  { id: 6, text: "Added to your shopping list. You now have 7 items. Want me to order them through Instacart when you're ready?", sender: "clods", timestamp: "1:15 PM", status: "executed", taskCreated: "Grocery shopping" },
-  { id: 7, text: "every friday at 4pm send me a summary of what I did this week", sender: "user", timestamp: "12:30 PM" },
-  { id: 8, text: "Workflow created: \"Weekly summary\"\nSchedule: Every Friday at 4:00 PM\nAction: Compile completed tasks and send via WhatsApp\n\nFirst run: This Friday. You can manage it in Workflows.", sender: "clods", timestamp: "12:30 PM", status: "executed" },
-  { id: 9, text: "cancel my gym membership", sender: "user", timestamp: "11:45 AM" },
-  { id: 10, text: "I tried to process this but I need more info. Which gym? I found two in your messages: FitLife and Gold's Gym.", sender: "clods", timestamp: "11:45 AM", status: "pending" },
-  { id: 11, text: "FitLife", sender: "user", timestamp: "11:46 AM" },
-  { id: 12, text: "Got it. I'll draft a cancellation email for FitLife and send it for your review before sending. Check your tasks.", sender: "clods", timestamp: "11:46 AM", status: "executed", taskCreated: "Cancel FitLife membership" },
-  { id: 13, text: "how many tasks did I complete this week", sender: "user", timestamp: "Yesterday, 6:00 PM" },
-  { id: 14, text: "This week you completed 18 tasks. That's up 29% from last week (14). Your most productive day was Wednesday with 6 completions.", sender: "clods", timestamp: "Yesterday, 6:00 PM", status: "executed" },
-  { id: 15, text: "book a table for 2 at that italian place for saturday", sender: "user", timestamp: "Yesterday, 3:22 PM" },
-  { id: 16, text: "Looking up Italian restaurants from your history... Found \"Trattoria Roma\" which you visited last month. Checking availability for Saturday evening. I'll confirm once booked.", sender: "clods", timestamp: "Yesterday, 3:22 PM", status: "executed", taskCreated: "Restaurant reservation" },
-]
-
 export default function MessagesPage() {
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES)
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [filterStatus, setFilterStatus] = useState<"all" | "executed" | "pending" | "failed">("all")
   const [search, setSearch] = useState("")
@@ -53,29 +35,20 @@ export default function MessagesPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
-
-    const userMsg: Message = {
-      id: Date.now(),
-      text: input.trim(),
-      sender: "user",
-      timestamp: "Just now",
+    try {
+      const data = await apiFetch<{ userMessage: Message; botMessage: Message }>("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({ text: input.trim() }),
+      })
+      setMessages((prev) => [...prev, data.userMessage, data.botMessage])
+      setInput("")
+      setTimeout(scrollToBottom, 100)
+    } catch (err) {
+      // keep input for retry
     }
-
-    const clodsResponse: Message = {
-      id: Date.now() + 1,
-      text: `Understood. Processing: "${input.trim()}". I'll handle this and update you when it's done.`,
-      sender: "clods",
-      timestamp: "Just now",
-      status: "pending",
-    }
-
-    setMessages((prev) => [...prev, userMsg, clodsResponse])
-    setInput("")
-
-    setTimeout(scrollToBottom, 100)
   }
 
   const filtered = messages.filter((m) => {
@@ -115,6 +88,20 @@ export default function MessagesPage() {
 
   const executedCount = messages.filter((m) => m.status === "executed").length
   const tasksCreated = messages.filter((m) => m.taskCreated).length
+
+  useEffect(() => {
+    const loadMessages = async () => {
+      try {
+        const data = await apiFetch<{ messages: Message[] }>("/api/messages")
+        setMessages(data.messages)
+        setTimeout(scrollToBottom, 100)
+      } catch (err) {
+        // Keep empty state on failure
+      }
+    }
+
+    loadMessages()
+  }, [])
 
   return (
     <DashboardShell activeItem="Messages" title="Messages" subtitle="Your conversation history with ClodsApp.">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import DashboardShell from "@/components/dashboard-shell"
 import {
   User,
@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Clock,
 } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
 interface ToggleSetting {
   id: string
@@ -34,8 +35,8 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
 
   // WhatsApp
-  const [whatsappConnected] = useState(true)
-  const [phoneNumber] = useState("+1 (555) 123-4567")
+  const [whatsappConnected, setWhatsappConnected] = useState(true)
+  const [phoneNumber, setPhoneNumber] = useState("+1 (555) 123-4567")
   const [autoExecute, setAutoExecute] = useState(true)
   const [confirmBefore, setConfirmBefore] = useState(false)
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(true)
@@ -43,31 +44,100 @@ export default function SettingsPage() {
   const [quietEnd, setQuietEnd] = useState("07:00")
 
   // Notifications
-  const [notifications, setNotifications] = useState<ToggleSetting[]>([
-    { id: "task-complete", label: "Task completed", description: "Get notified when a task finishes executing.", enabled: true },
-    { id: "task-failed", label: "Task failed", description: "Get alerted when a task fails and needs attention.", enabled: true },
-    { id: "workflow-run", label: "Workflow executed", description: "Notification after each scheduled workflow run.", enabled: false },
-    { id: "weekly-digest", label: "Weekly digest", description: "A weekly summary of your activity and stats.", enabled: true },
-    { id: "product-updates", label: "Product updates", description: "New features, improvements, and tips.", enabled: false },
-  ])
+  const [notifications, setNotifications] = useState<ToggleSetting[]>([])
 
   // Security
-  const [sessions] = useState([
-    { device: "Chrome on macOS", location: "New York, US", lastActive: "Active now", current: true },
-    { device: "ClodsApp WhatsApp Bot", location: "Cloud", lastActive: "Active now", current: false },
-    { device: "Safari on iPhone", location: "New York, US", lastActive: "2 hours ago", current: false },
-  ])
+  const [sessions, setSessions] = useState<Array<{ device: string; location: string; lastActive: string; current: boolean }>>([])
+  const [apiKey, setApiKey] = useState("clods_sk_demo_xxxxxxxxxxxxxxxxx")
 
-  const handleSave = () => {
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  const handleSave = async () => {
+    const payload = { displayName, email, timezone }
+    try {
+      await syncSettings(payload)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      setSaved(false)
+    }
   }
 
-  const toggleNotification = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, enabled: !n.enabled } : n)),
-    )
+  const toggleNotification = async (id: string) => {
+    const next = notifications.map((n) => (n.id === id ? { ...n, enabled: !n.enabled } : n))
+    setNotifications(next)
+    await syncSettings({ notifications: next })
   }
+
+  const syncSettings = async (payload: Record<string, unknown>) => {
+    const data = await apiFetch<{
+      profile: { displayName: string; email: string; timezone: string }
+      whatsapp: {
+        connected: boolean
+        phoneNumber: string
+        autoExecute: boolean
+        confirmBefore: boolean
+        quietHoursEnabled: boolean
+        quietStart: string
+        quietEnd: string
+      }
+      notifications: ToggleSetting[]
+      security: { apiKey: string; sessions: Array<{ device: string; location: string; lastActive: string; current: boolean }> }
+    }>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    })
+
+    setDisplayName(data.profile.displayName)
+    setEmail(data.profile.email)
+    setTimezone(data.profile.timezone)
+    setWhatsappConnected(data.whatsapp.connected)
+    setPhoneNumber(data.whatsapp.phoneNumber)
+    setAutoExecute(data.whatsapp.autoExecute)
+    setConfirmBefore(data.whatsapp.confirmBefore)
+    setQuietHoursEnabled(data.whatsapp.quietHoursEnabled)
+    setQuietStart(data.whatsapp.quietStart)
+    setQuietEnd(data.whatsapp.quietEnd)
+    setNotifications(data.notifications)
+    setApiKey(data.security.apiKey)
+    setSessions(data.security.sessions)
+  }
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const data = await apiFetch<{
+          profile: { displayName: string; email: string; timezone: string }
+          whatsapp: {
+            connected: boolean
+            phoneNumber: string
+            autoExecute: boolean
+            confirmBefore: boolean
+            quietHoursEnabled: boolean
+            quietStart: string
+            quietEnd: string
+          }
+          notifications: ToggleSetting[]
+          security: { apiKey: string; sessions: Array<{ device: string; location: string; lastActive: string; current: boolean }> }
+        }>("/api/settings")
+        setDisplayName(data.profile.displayName)
+        setEmail(data.profile.email)
+        setTimezone(data.profile.timezone)
+        setWhatsappConnected(data.whatsapp.connected)
+        setPhoneNumber(data.whatsapp.phoneNumber)
+        setAutoExecute(data.whatsapp.autoExecute)
+        setConfirmBefore(data.whatsapp.confirmBefore)
+        setQuietHoursEnabled(data.whatsapp.quietHoursEnabled)
+        setQuietStart(data.whatsapp.quietStart)
+        setQuietEnd(data.whatsapp.quietEnd)
+        setNotifications(data.notifications)
+        setApiKey(data.security.apiKey)
+        setSessions(data.security.sessions)
+      } catch (err) {
+        // Keep defaults on failure
+      }
+    }
+
+    loadSettings()
+  }, [])
 
   const tabs = [
     { id: "profile" as const, label: "Profile", icon: User },
@@ -212,6 +282,11 @@ export default function SettingsPage() {
               </div>
               <button
                 type="button"
+                onClick={() => {
+                  const next = !whatsappConnected
+                  setWhatsappConnected(next)
+                  syncSettings({ whatsapp: { connected: next } })
+                }}
                 className="px-3 py-1.5 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
               >
                 {whatsappConnected ? "Disconnect" : "Connect"}
@@ -227,7 +302,11 @@ export default function SettingsPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setAutoExecute(!autoExecute)}
+                  onClick={() => {
+                    const next = !autoExecute
+                    setAutoExecute(next)
+                    syncSettings({ whatsapp: { autoExecute: next } })
+                  }}
                   className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${
                     autoExecute ? "bg-accent" : "bg-muted"
                   }`}
@@ -247,7 +326,11 @@ export default function SettingsPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setConfirmBefore(!confirmBefore)}
+                  onClick={() => {
+                    const next = !confirmBefore
+                    setConfirmBefore(next)
+                    syncSettings({ whatsapp: { confirmBefore: next } })
+                  }}
                   className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${
                     confirmBefore ? "bg-accent" : "bg-muted"
                   }`}
@@ -271,7 +354,11 @@ export default function SettingsPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setQuietHoursEnabled(!quietHoursEnabled)}
+                onClick={() => {
+                  const next = !quietHoursEnabled
+                  setQuietHoursEnabled(next)
+                  syncSettings({ whatsapp: { quietHoursEnabled: next } })
+                }}
                 className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${
                   quietHoursEnabled ? "bg-accent" : "bg-muted"
                 }`}
@@ -296,7 +383,11 @@ export default function SettingsPage() {
                       id="quietStart"
                       type="time"
                       value={quietStart}
-                      onChange={(e) => setQuietStart(e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setQuietStart(value)
+                        syncSettings({ whatsapp: { quietStart: value } })
+                      }}
                       className="pl-9 pr-3 py-2 bg-secondary border border-border rounded-lg text-sm text-foreground focus:outline-none focus:border-accent/30 transition-all"
                     />
                   </div>
@@ -312,7 +403,11 @@ export default function SettingsPage() {
                       id="quietEnd"
                       type="time"
                       value={quietEnd}
-                      onChange={(e) => setQuietEnd(e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setQuietEnd(value)
+                        syncSettings({ whatsapp: { quietEnd: value } })
+                      }}
                       className="pl-9 pr-3 py-2 bg-secondary border border-border rounded-lg text-sm text-foreground focus:outline-none focus:border-accent/30 transition-all"
                     />
                   </div>
@@ -367,7 +462,7 @@ export default function SettingsPage() {
 
             <div className="flex items-center gap-3">
               <div className="flex-1 px-3 py-2.5 bg-secondary border border-border rounded-lg">
-                <code className="text-sm font-mono text-muted-foreground">clods_sk_•••••••••••••••••••••qX7k</code>
+                <code className="text-sm font-mono text-muted-foreground">{apiKey}</code>
               </div>
               <button
                 type="button"

@@ -2,7 +2,7 @@
 
 import React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import DashboardShell from "@/components/dashboard-shell"
 import {
   CheckCircle2,
@@ -18,6 +18,7 @@ import {
   RotateCcw,
   ChevronDown,
 } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
 type TaskStatus = "pending" | "running" | "done" | "failed"
 type TaskPriority = "low" | "medium" | "high"
@@ -33,23 +34,10 @@ interface Task {
   tags: string[]
 }
 
-const INITIAL_TASKS: Task[] = [
-  { id: 1, title: "Call the bank about mortgage", status: "pending", priority: "high", source: "WhatsApp", scheduledFor: "Today, 5:00 PM", createdAt: "2 hours ago", tags: ["finance"] },
-  { id: 2, title: "Send weekly report to team", status: "running", priority: "medium", source: "Workflow", scheduledFor: "Today, 6:00 PM", createdAt: "3 hours ago", tags: ["work"] },
-  { id: 3, title: "Book dentist appointment", status: "done", priority: "medium", source: "WhatsApp", scheduledFor: "Today, 2:00 PM", createdAt: "5 hours ago", tags: ["health"] },
-  { id: 4, title: "Prepare meeting notes for Sam", status: "done", priority: "high", source: "WhatsApp", scheduledFor: "Today, 11:30 AM", createdAt: "6 hours ago", tags: ["work"] },
-  { id: 5, title: "Order groceries for the week", status: "pending", priority: "low", source: "WhatsApp", scheduledFor: "Tomorrow, 9:00 AM", createdAt: "1 day ago", tags: ["personal"] },
-  { id: 6, title: "Review and sign lease agreement", status: "pending", priority: "high", source: "WhatsApp", scheduledFor: "Tomorrow, 3:00 PM", createdAt: "1 day ago", tags: ["finance", "legal"] },
-  { id: 7, title: "Cancel old streaming subscription", status: "failed", priority: "low", source: "WhatsApp", scheduledFor: "Yesterday", createdAt: "2 days ago", tags: ["personal"] },
-  { id: 8, title: "Send birthday gift to Mom", status: "done", priority: "high", source: "WhatsApp", scheduledFor: "Yesterday, 10:00 AM", createdAt: "2 days ago", tags: ["personal"] },
-  { id: 9, title: "Research flight tickets to Tokyo", status: "pending", priority: "medium", source: "WhatsApp", scheduledFor: "This week", createdAt: "3 days ago", tags: ["travel"] },
-  { id: 10, title: "Backup phone photos to cloud", status: "done", priority: "low", source: "Workflow", scheduledFor: "Yesterday", createdAt: "3 days ago", tags: ["tech"] },
-]
-
 const ALL_TAGS = ["work", "personal", "finance", "health", "travel", "tech", "legal"]
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS)
+  const [tasks, setTasks] = useState<Task[]>([])
   const [filter, setFilter] = useState<"all" | TaskStatus>("all")
   const [search, setSearch] = useState("")
   const [newTaskTitle, setNewTaskTitle] = useState("")
@@ -67,40 +55,56 @@ export default function TasksPage() {
       return b.id - a.id
     })
 
-  const handleAddTask = (e: React.FormEvent) => {
+  const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newTaskTitle.trim()) return
-    const newTask: Task = {
-      id: Date.now(),
-      title: newTaskTitle.trim(),
-      status: "pending",
-      priority: "medium",
-      source: "Manual",
-      scheduledFor: "Unscheduled",
-      createdAt: "Just now",
-      tags: [],
+    try {
+      const data = await apiFetch<{ task: Task }>("/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({ title: newTaskTitle.trim() }),
+      })
+      setTasks((prev) => [data.task, ...prev])
+      setNewTaskTitle("")
+      setShowNewTask(false)
+    } catch (err) {
+      // keep form open for retry
     }
-    setTasks((prev) => [newTask, ...prev])
-    setNewTaskTitle("")
-    setShowNewTask(false)
   }
 
-  const toggleTaskDone = (id: number) => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, status: t.status === "done" ? "pending" : "done" } : t,
-      ),
-    )
+  const toggleTaskDone = async (id: number) => {
+    const current = tasks.find((t) => t.id === id)
+    if (!current) return
+    const nextStatus = current.status === "done" ? "pending" : "done"
+    try {
+      const data = await apiFetch<{ task: Task }>(`/api/tasks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      setTasks((prev) => prev.map((t) => (t.id === id ? data.task : t)))
+    } catch (err) {
+      // ignore
+    }
   }
 
-  const retryTask = (id: number) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: "pending" } : t)),
-    )
+  const retryTask = async (id: number) => {
+    try {
+      const data = await apiFetch<{ task: Task }>(`/api/tasks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "pending" }),
+      })
+      setTasks((prev) => prev.map((t) => (t.id === id ? data.task : t)))
+    } catch (err) {
+      // ignore
+    }
   }
 
-  const deleteTask = (id: number) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id))
+  const deleteTask = async (id: number) => {
+    try {
+      await apiFetch(`/api/tasks/${id}`, { method: "DELETE" })
+      setTasks((prev) => prev.filter((t) => t.id !== id))
+    } catch (err) {
+      // ignore
+    }
   }
 
   const statusIcon = (status: TaskStatus) => {
@@ -136,6 +140,19 @@ export default function TasksPage() {
     done: tasks.filter((t) => t.status === "done").length,
     failed: tasks.filter((t) => t.status === "failed").length,
   }
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        const data = await apiFetch<{ tasks: Task[] }>("/api/tasks")
+        setTasks(data.tasks)
+      } catch (err) {
+        // Keep empty state on failure
+      }
+    }
+
+    loadTasks()
+  }, [])
 
   return (
     <DashboardShell activeItem="Tasks" title="Tasks" subtitle="Everything you've asked ClodsApp to handle.">

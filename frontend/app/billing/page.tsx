@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import DashboardShell from "@/components/dashboard-shell"
 import {
@@ -9,16 +9,55 @@ import {
   CreditCard,
   Download,
 } from "lucide-react"
-
-const INVOICES = [
-  { id: "INV-2026-001", date: "Jan 1, 2026", amount: "$29.00", status: "Paid" },
-  { id: "INV-2025-012", date: "Dec 1, 2025", amount: "$29.00", status: "Paid" },
-  { id: "INV-2025-011", date: "Nov 1, 2025", amount: "$29.00", status: "Paid" },
-  { id: "INV-2025-010", date: "Oct 1, 2025", amount: "$0.00", status: "Free tier" },
-]
+import { apiFetch } from "@/lib/api"
 
 export default function BillingPage() {
   const [selectedPlan, setSelectedPlan] = useState<"starter" | "pro">("pro")
+  const [usage, setUsage] = useState({
+    executions: { used: "0", total: "Unlimited", pct: 100 },
+    workflows: { used: "0", total: 0, pct: 0 },
+    messages: { used: "0", total: "Unlimited", pct: 100 },
+  })
+  const [invoices, setInvoices] = useState<Array<{ id: string; date: string; amount: string; status: string }>>([])
+
+  useEffect(() => {
+    const loadBilling = async () => {
+      try {
+        const data = await apiFetch<{
+          plan: "starter" | "pro"
+          usage: {
+            executions: { used: string | number; total: string | number; pct: number }
+            workflows: { used: string | number; total: string | number; pct: number }
+            messages: { used: string | number; total: string | number; pct: number }
+          }
+          invoices: Array<{ id: string; date: string; amount: string; status: string }>
+        }>("/api/billing")
+        setSelectedPlan(data.plan)
+        setUsage({
+          executions: {
+            used: data.usage.executions.used.toString(),
+            total: data.usage.executions.total.toString(),
+            pct: data.usage.executions.pct,
+          },
+          workflows: {
+            used: data.usage.workflows.used.toString(),
+            total: data.usage.workflows.total.toString(),
+            pct: data.usage.workflows.pct,
+          },
+          messages: {
+            used: data.usage.messages.used.toString(),
+            total: data.usage.messages.total.toString(),
+            pct: data.usage.messages.pct,
+          },
+        })
+        setInvoices(data.invoices)
+      } catch (err) {
+        // Keep defaults on failure
+      }
+    }
+
+    loadBilling()
+  }, [])
 
   return (
     <DashboardShell activeItem="Billing" title="Billing" subtitle="Pay for execution, not seats.">
@@ -96,9 +135,9 @@ export default function BillingPage() {
           <div className="border border-border rounded-xl bg-card p-6">
             <div className="grid grid-cols-3 gap-6 mb-6">
               {[
-                { label: "Executions", used: "247", total: "Unlimited", pct: 100 },
-                { label: "Workflows", used: "2", total: "10", pct: 20 },
-                { label: "Messages", used: "89", total: "Unlimited", pct: 100 },
+                { label: "Executions", used: usage.executions.used, total: usage.executions.total, pct: usage.executions.pct },
+                { label: "Workflows", used: usage.workflows.used, total: usage.workflows.total, pct: usage.workflows.pct },
+                { label: "Messages", used: usage.messages.used, total: usage.messages.total, pct: usage.messages.pct },
               ].map((item, i) => (
                 <div key={i}>
                   <div className="text-xs text-muted-foreground mb-1">{item.label}</div>
@@ -158,7 +197,7 @@ export default function BillingPage() {
               <span>Amount</span>
               <span className="text-right">Status</span>
             </div>
-            {INVOICES.map((inv, i) => (
+            {invoices.map((inv, i) => (
               <div
                 key={inv.id}
                 className={`grid grid-cols-4 px-5 py-4 items-center ${

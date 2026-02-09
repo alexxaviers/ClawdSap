@@ -7,20 +7,45 @@ import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Zap, ArrowRight, Mail } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const router = useRouter()
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    router.push("/verify")
+    setError(null)
+    setSubmitting(true)
+    try {
+      const endpoint = mode === "signin" ? "/api/auth/login" : "/api/auth/signup"
+      await apiFetch(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      })
+      router.push("/verify")
+    } catch (err) {
+      setError("Unable to authenticate. Please try again.")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  const handleSocialAuth = () => {
-    router.push("/verify")
+  const handleSocialAuth = async () => {
+    setError(null)
+    setSubmitting(true)
+    try {
+      await apiFetch("/api/auth/alien/start")
+      router.push("/verify")
+    } catch (err) {
+      setError("Alien.org auth is not configured yet.")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -93,6 +118,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleSocialAuth}
+              disabled={submitting}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-secondary transition-all text-sm font-medium text-foreground"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -118,6 +144,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleSocialAuth}
+              disabled={submitting}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-secondary transition-all text-sm font-medium text-foreground"
             >
               <svg className="w-4 h-4 text-foreground" fill="currentColor" viewBox="0 0 24 24">
@@ -170,12 +197,17 @@ export default function LoginPage() {
 
             <button
               type="submit"
+              disabled={submitting}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-accent text-accent-foreground rounded-lg hover:opacity-90 transition-all font-semibold text-sm"
             >
-              {mode === "signin" ? "Sign In" : "Create Account"}
+              {submitting ? "Please wait..." : mode === "signin" ? "Sign In" : "Create Account"}
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+
+          {error && (
+            <div className="mt-4 text-xs text-destructive text-center">{error}</div>
+          )}
 
           <div className="mt-6 text-center">
             <button

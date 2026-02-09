@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import DashboardShell from "@/components/dashboard-shell"
 import {
   CheckCircle2,
@@ -11,34 +11,56 @@ import {
   Send,
   MoreHorizontal,
 } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
-const TASKS = [
-  { id: 1, title: "Call the bank about mortgage", status: "pending", time: "Today, 5:00 PM", source: "WhatsApp" },
-  { id: 2, title: "Send weekly report to team", status: "running", time: "Today, 6:00 PM", source: "Workflow" },
-  { id: 3, title: "Book dentist appointment", status: "done", time: "Today, 2:00 PM", source: "WhatsApp" },
-  { id: 4, title: "Prepare meeting notes for Sam", status: "done", time: "Today, 11:30 AM", source: "WhatsApp" },
-  { id: 5, title: "Order groceries for the week", status: "pending", time: "Tomorrow, 9:00 AM", source: "WhatsApp" },
-]
+interface DashboardTask {
+  id: number
+  title: string
+  status: string
+  scheduledFor: string
+  source: string
+}
 
-const WORKFLOWS = [
-  { id: 1, name: "Weekly summary", schedule: "Every Monday, 9:00 AM", lastRun: "2 days ago", active: true },
-  { id: 2, name: "Daily standup prep", schedule: "Every weekday, 8:30 AM", lastRun: "12 hours ago", active: true },
-  { id: 3, name: "Expense tracker", schedule: "End of month", lastRun: "3 weeks ago", active: false },
-]
+interface DashboardWorkflow {
+  id: number
+  name: string
+  schedule: string
+  lastRun: string | null
+  active: boolean
+}
 
-const RECENT_MESSAGES = [
-  { id: 1, text: "remind me to call Sam at 5pm", time: "2 min ago", executed: true },
-  { id: 2, text: "what's on my schedule tomorrow", time: "15 min ago", executed: true },
-  { id: 3, text: "add groceries to my list", time: "1 hour ago", executed: true },
-]
+interface DashboardMessage {
+  id: number
+  text: string
+  timestamp: string
+  status?: string
+}
 
 export default function DashboardPage() {
   const [command, setCommand] = useState("")
+  const [stats, setStats] = useState({
+    tasksToday: 0,
+    executionsThisWeek: 0,
+    activeWorkflows: 0,
+    messagesProcessed: 0,
+  })
+  const [tasks, setTasks] = useState<DashboardTask[]>([])
+  const [workflows, setWorkflows] = useState<DashboardWorkflow[]>([])
+  const [messages, setMessages] = useState<DashboardMessage[]>([])
 
-  const handleCommand = (e: React.FormEvent) => {
+  const handleCommand = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!command.trim()) return
+    const text = command.trim()
     setCommand("")
+    try {
+      await apiFetch("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      })
+    } catch (err) {
+      // ignore
+    }
   }
 
   const statusIcon = (status: string) => {
@@ -53,6 +75,27 @@ export default function DashboardPage() {
         return <Circle className="w-4 h-4 text-muted-foreground" />
     }
   }
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        const data = await apiFetch<{
+          stats: typeof stats
+          tasks: DashboardTask[]
+          workflows: DashboardWorkflow[]
+          messages: DashboardMessage[]
+        }>("/api/dashboard")
+        setStats(data.stats)
+        setTasks(data.tasks)
+        setWorkflows(data.workflows)
+        setMessages(data.messages)
+      } catch (err) {
+        // Keep empty state on failure
+      }
+    }
+
+    loadDashboard()
+  }, [])
 
   return (
     <DashboardShell activeItem="Command Center" title="Command Center" subtitle="Your life, running quietly in the background.">
@@ -83,10 +126,10 @@ export default function DashboardPage() {
       {/* Stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
-          { label: "Tasks today", value: "5", sub: "2 pending" },
-          { label: "Executions this week", value: "34", sub: "+12% from last week" },
-          { label: "Active workflows", value: "2", sub: "Running on schedule" },
-          { label: "Messages processed", value: "89", sub: "This month" },
+          { label: "Tasks today", value: stats.tasksToday.toString(), sub: "Pending from messages" },
+          { label: "Executions this week", value: stats.executionsThisWeek.toString(), sub: "Mocked for now" },
+          { label: "Active workflows", value: stats.activeWorkflows.toString(), sub: "Running on schedule" },
+          { label: "Messages processed", value: stats.messagesProcessed.toString(), sub: "This month" },
         ].map((stat, i) => (
           <div key={i} className="p-5 border border-border rounded-xl bg-card">
             <div className="text-xs text-muted-foreground mb-2">{stat.label}</div>
@@ -106,11 +149,11 @@ export default function DashboardPage() {
             </a>
           </div>
           <div className="border border-border rounded-xl bg-card overflow-hidden">
-            {TASKS.map((task, i) => (
+            {tasks.map((task, i) => (
               <div
                 key={task.id}
                 className={`flex items-center gap-4 px-5 py-4 ${
-                  i < TASKS.length - 1 ? "border-b border-border" : ""
+                  i < tasks.length - 1 ? "border-b border-border" : ""
                 } hover:bg-secondary/30 transition-colors`}
               >
                 {statusIcon(task.status)}
@@ -119,7 +162,7 @@ export default function DashboardPage() {
                     {task.title}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">
-                    {task.time}
+                    {task.scheduledFor}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -143,7 +186,7 @@ export default function DashboardPage() {
               </a>
             </div>
             <div className="space-y-3">
-              {WORKFLOWS.map((wf) => (
+              {workflows.map((wf) => (
                 <div key={wf.id} className="p-4 border border-border rounded-xl bg-card">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-sm font-medium text-foreground">{wf.name}</div>
@@ -155,7 +198,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-xs text-muted-foreground">{wf.schedule}</div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    Last run: {wf.lastRun}
+                    Last run: {wf.lastRun || "N/A"}
                   </div>
                 </div>
               ))}
@@ -171,7 +214,7 @@ export default function DashboardPage() {
               </a>
             </div>
             <div className="space-y-2">
-              {RECENT_MESSAGES.map((msg) => (
+              {messages.map((msg) => (
                 <div key={msg.id} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-card">
                   <Play className="w-3.5 h-3.5 text-accent mt-0.5 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -179,8 +222,8 @@ export default function DashboardPage() {
                       {msg.text}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                      {msg.time}
-                      {msg.executed && (
+                      {msg.timestamp}
+                      {msg.status === "executed" && (
                         <span className="text-accent">Executed</span>
                       )}
                     </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import DashboardShell from "@/components/dashboard-shell"
 import {
   Workflow,
@@ -20,6 +20,7 @@ import {
   Copy,
   Edit3,
 } from "lucide-react"
+import { apiFetch } from "@/lib/api"
 
 interface WorkflowStep {
   label: string
@@ -39,98 +40,40 @@ interface WorkflowItem {
   steps: WorkflowStep[]
 }
 
-const INITIAL_WORKFLOWS: WorkflowItem[] = [
-  {
-    id: 1,
-    name: "Weekly summary",
-    description: "Aggregates all completed tasks from the week and sends a formatted summary to your WhatsApp every Monday morning.",
-    schedule: "Every Monday, 9:00 AM",
-    lastRun: "2 days ago",
-    nextRun: "In 5 days",
-    active: true,
-    totalRuns: 24,
-    successRate: 100,
-    steps: [
-      { label: "Trigger: Monday 9 AM", type: "trigger" },
-      { label: "Fetch completed tasks", type: "action" },
-      { label: "Format summary", type: "action" },
-      { label: "Send via WhatsApp", type: "action" },
-    ],
-  },
-  {
-    id: 2,
-    name: "Daily standup prep",
-    description: "Pulls your calendar, pending tasks, and yesterday's completed items into a standup-ready message before your first meeting.",
-    schedule: "Every weekday, 8:30 AM",
-    lastRun: "12 hours ago",
-    nextRun: "Tomorrow, 8:30 AM",
-    active: true,
-    totalRuns: 112,
-    successRate: 98,
-    steps: [
-      { label: "Trigger: Weekday 8:30 AM", type: "trigger" },
-      { label: "Check calendar events", type: "action" },
-      { label: "List pending tasks", type: "action" },
-      { label: "If > 3 items, prioritize", type: "condition" },
-      { label: "Send standup brief", type: "action" },
-    ],
-  },
-  {
-    id: 3,
-    name: "Expense tracker",
-    description: "Monitors messages tagged with amounts and categorizes them into an expense log at the end of each month.",
-    schedule: "End of month",
-    lastRun: "3 weeks ago",
-    nextRun: "Feb 28, 2026",
-    active: false,
-    totalRuns: 6,
-    successRate: 83,
-    steps: [
-      { label: "Trigger: Last day of month", type: "trigger" },
-      { label: "Scan tagged messages", type: "action" },
-      { label: "Categorize expenses", type: "action" },
-      { label: "If total > budget, alert", type: "condition" },
-      { label: "Generate report", type: "action" },
-    ],
-  },
-  {
-    id: 4,
-    name: "Morning briefing",
-    description: "A personalized morning briefing with weather, top news, and your agenda for the day. Delivered before you wake up.",
-    schedule: "Every day, 6:30 AM",
-    lastRun: "6 hours ago",
-    nextRun: "Tomorrow, 6:30 AM",
-    active: true,
-    totalRuns: 45,
-    successRate: 100,
-    steps: [
-      { label: "Trigger: Daily 6:30 AM", type: "trigger" },
-      { label: "Fetch weather", type: "action" },
-      { label: "Fetch calendar", type: "action" },
-      { label: "Compose briefing", type: "action" },
-      { label: "Send via WhatsApp", type: "action" },
-    ],
-  },
-]
-
 export default function WorkflowsPage() {
-  const [workflows, setWorkflows] = useState<WorkflowItem[]>(INITIAL_WORKFLOWS)
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>([])
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null)
 
-  const toggleActive = (id: number) => {
-    setWorkflows((prev) =>
-      prev.map((wf) => (wf.id === id ? { ...wf, active: !wf.active } : wf)),
-    )
+  const toggleActive = async (id: number) => {
+    const current = workflows.find((wf) => wf.id === id)
+    if (!current) return
+    try {
+      const data = await apiFetch<{ workflow: WorkflowItem }>(`/api/workflows/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: !current.active }),
+      })
+      setWorkflows((prev) => prev.map((wf) => (wf.id === id ? data.workflow : wf)))
+    } catch (err) {
+      // ignore
+    }
   }
 
-  const deleteWorkflow = (id: number) => {
-    setWorkflows((prev) => prev.filter((wf) => wf.id !== id))
-    setMenuOpenId(null)
+  const deleteWorkflow = async (id: number) => {
+    try {
+      await apiFetch(`/api/workflows/${id}`, { method: "DELETE" })
+      setWorkflows((prev) => prev.filter((wf) => wf.id !== id))
+      setMenuOpenId(null)
+    } catch (err) {
+      // ignore
+    }
   }
 
   const activeCount = workflows.filter((w) => w.active).length
   const totalRuns = workflows.reduce((sum, w) => sum + w.totalRuns, 0)
+  const avgSuccess = workflows.length
+    ? Math.round(workflows.reduce((sum, w) => sum + w.successRate, 0) / workflows.length)
+    : 0
 
   const stepColor = (type: WorkflowStep["type"]) => {
     switch (type) {
@@ -143,6 +86,19 @@ export default function WorkflowsPage() {
     }
   }
 
+  useEffect(() => {
+    const loadWorkflows = async () => {
+      try {
+        const data = await apiFetch<{ workflows: WorkflowItem[] }>("/api/workflows")
+        setWorkflows(data.workflows)
+      } catch (err) {
+        // Keep empty state on failure
+      }
+    }
+
+    loadWorkflows()
+  }, [])
+
   return (
     <DashboardShell activeItem="Workflows" title="Workflows" subtitle="Automations that run while you sleep.">
       {/* Stats */}
@@ -150,7 +106,7 @@ export default function WorkflowsPage() {
         {[
           { label: "Active workflows", value: activeCount.toString() },
           { label: "Total executions", value: totalRuns.toString() },
-          { label: "Avg. success rate", value: `${Math.round(workflows.reduce((sum, w) => sum + w.successRate, 0) / workflows.length)}%` },
+          { label: "Avg. success rate", value: `${avgSuccess}%` },
         ].map((stat, i) => (
           <div key={i} className="p-5 border border-border rounded-xl bg-card">
             <div className="text-xs text-muted-foreground mb-1">{stat.label}</div>

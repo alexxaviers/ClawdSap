@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Zap, ArrowRight, CheckCircle2 } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
+import { apiFetch } from "@/lib/api"
 
 const INTENTS = [
   { id: "personal", label: "Running my own life", desc: "Tasks, reminders, personal workflows" },
@@ -24,6 +25,7 @@ export default function VerifyPage() {
   const [confirmed, setConfirmed] = useState<boolean[]>([false, false, false])
   const [verifying, setVerifying] = useState(false)
   const [typewriterText, setTypewriterText] = useState("")
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   const greetingText = "Before we begin, a quick check."
@@ -45,14 +47,29 @@ export default function VerifyPage() {
 
   const allConfirmed = confirmed.every(Boolean)
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (step === 1 && selectedIntent) {
       setStep(2)
-    } else if (step === 2 && allConfirmed) {
+      return
+    }
+    if (step === 2 && allConfirmed) {
       setVerifying(true)
-      setTimeout(() => {
-        router.push("/onboarding")
-      }, 1500)
+      setError(null)
+      try {
+        await apiFetch("/api/verify", {
+          method: "POST",
+          body: JSON.stringify({
+            intent: selectedIntent,
+            statementsConfirmed: STATEMENTS,
+          }),
+        })
+        setTimeout(() => {
+          router.push("/onboarding")
+        }, 900)
+      } catch (err) {
+        setVerifying(false)
+        setError("Verification failed. Please try again.")
+      }
     }
   }
 
@@ -188,6 +205,9 @@ export default function VerifyPage() {
                 <p className="text-center text-xs text-muted-foreground mt-4">
                   This is a one-time confirmation. Not a captcha.
                 </p>
+                {error && (
+                  <div className="mt-3 text-xs text-destructive text-center">{error}</div>
+                )}
               </div>
             )}
           </div>

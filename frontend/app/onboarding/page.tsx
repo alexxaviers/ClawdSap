@@ -16,6 +16,7 @@ import {
   Shield,
 } from "lucide-react"
 import Link from "next/link"
+import { apiFetch } from "@/lib/api"
 
 const CAPABILITIES = [
   { icon: CheckCircle2, label: "Create tasks", desc: "\"Add groceries to my list\"" },
@@ -31,34 +32,52 @@ export default function OnboardingPage() {
   const [enabledCapabilities, setEnabledCapabilities] = useState<Set<number>>(new Set([0, 1, 2, 3]))
   const [firstMessage, setFirstMessage] = useState("")
   const [messageSent, setMessageSent] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   const totalSteps = 4
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     setConnecting(true)
-    setTimeout(() => {
-      setConnecting(false)
+    setError(null)
+    try {
+      await apiFetch("/api/onboarding/connect-whatsapp", { method: "POST" })
       setConnected(true)
-    }, 2000)
+    } catch (err) {
+      setError("Unable to connect WhatsApp right now.")
+    } finally {
+      setConnecting(false)
+    }
   }
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!firstMessage.trim()) return
     setMessageSent(true)
-    setTimeout(() => {
-      router.push("/dashboard")
-    }, 2000)
+    setError(null)
+    try {
+      await apiFetch("/api/onboarding/first-message", {
+        method: "POST",
+        body: JSON.stringify({ text: firstMessage.trim() }),
+      })
+      setTimeout(() => {
+        router.push("/dashboard")
+      }, 1200)
+    } catch (err) {
+      setMessageSent(false)
+      setError("Unable to send your first message.")
+    }
   }
 
-  const toggleCapability = (idx: number) => {
-    const next = new Set(enabledCapabilities)
-    if (next.has(idx)) {
-      next.delete(idx)
-    } else {
-      next.add(idx)
+  const persistCapabilities = async (next: Set<number>) => {
+    const capabilities = Array.from(next).map((index) => CAPABILITIES[index]?.label)
+    try {
+      await apiFetch("/api/onboarding/capabilities", {
+        method: "PUT",
+        body: JSON.stringify({ capabilities }),
+      })
+    } catch (err) {
+      setError("Unable to update capabilities.")
     }
-    setEnabledCapabilities(next)
   }
 
   return (
@@ -205,7 +224,16 @@ export default function OnboardingPage() {
                     <button
                       key={i}
                       type="button"
-                      onClick={() => toggleCapability(i)}
+                      onClick={() => {
+                        const next = new Set(enabledCapabilities)
+                        if (next.has(i)) {
+                          next.delete(i)
+                        } else {
+                          next.add(i)
+                        }
+                        setEnabledCapabilities(next)
+                        persistCapabilities(next)
+                      }}
                       className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-4 ${
                         enabled
                           ? "border-accent/30 bg-accent/5"
@@ -239,6 +267,9 @@ export default function OnboardingPage() {
                 Continue
                 <ArrowRight className="w-4 h-4" />
               </button>
+              {error && (
+                <div className="mt-3 text-xs text-destructive">{error}</div>
+              )}
             </div>
           )}
 
@@ -317,6 +348,9 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 </div>
+              )}
+              {error && (
+                <div className="mt-3 text-xs text-destructive">{error}</div>
               )}
             </div>
           )}
